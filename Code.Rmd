@@ -1,0 +1,356 @@
+```{r}
+library(forecast)
+library(ggplot2)
+library(xlsx)
+library(fpp2)
+```
+
+
+
+# Importing the Power Data
+We load the data and plot them:
+```{r}
+all_data <- read.xlsx("/Users/tim/Library/CloudStorage/OneDrive-DataScienceTechInstitute/Time Series Analysis (Big Coeff)/Exam/Elec-train.xlsx", sheetIndex=1, header=TRUE)
+
+train_test_data <- all_data[1:4603,]
+
+# We make a hour unit instead of a 15min unit
+elec <- ts(train_test_data$Power..kW., start=c(1,2), freq=4)
+autoplot(elec) +
+  ggtitle("Electrecity consumption") +
+  xlab("Time (hours)") +
+  ylab("Electricity (KW)")
+```
+There seems to be no trend, but a "seasonal pattern" visible for each day.
+
+
+
+Some stats about the elec time series:
+```{r}
+summary(elec)
+```
+
+
+
+```{r}
+# Train = 80% of the train_test_data = 4603 * 0.8 = 3682 observations
+elec_train <- window(elec,end=c(921,3))
+# Test = 20% of the train_test_data = 4603 - 3682 = 921 observations
+elec_test <- window(elec, start=c(921,4))
+```
+
+
+
+## SES & Holt Winters models
+```{r}
+# SES model
+SES_fit <- ses(elec_train, h=921, alpha=NULL)
+
+# non-Seasonal Holt Winters model
+nsHW_fit <- holt(elec_train, h=921, alpha=NULL, beta=NULL)
+
+# Additive Seasonal Holt Winters model
+ASHW_fit <- hw(elec_train, seasonal="additive", h=921)
+
+# Additive Seasonal Holt Winters model (Damped)
+ASHW_D_fit <- hw(elec_train, seasonal="additive", h=921, damped=TRUE)
+
+# Multiplicative Seasonal Holt Winters model
+MSHW_fit <- hw(elec_train, seasonal="multiplicative", h=921)
+
+# Multiplicative Seasonal Holt Winters model (Damped)
+MSHW_D_fit <- hw(elec_train,
+                    seasonal="multiplicative",
+                    h=921,
+                    damped=TRUE)
+```
+
+
+
+```{r}
+message("RMSE SES_fit : ", sqrt(mean((SES_fit$mean-elec_test)^2)))
+message("RMSE nsHW_fit : ", sqrt(mean((nsHW_fit$mean-elec_test)^2)))
+message("RMSE ASHW_fit : ", sqrt(mean((ASHW_fit$mean-elec_test)^2)))
+message("RMSE ASHW_D_fit : ", sqrt(mean((ASHW_D_fit$mean-elec_test)^2)))
+message("RMSE MSHW_fit : ", sqrt(mean((MSHW_fit$mean-elec_test)^2)))
+message("RMSE MSHW_D_fit : ", sqrt(mean((MSHW_D_fit$mean-elec_test)^2)))
+```
+The Multiplicative Seasonal HW fit seems to be very bad.
+The best model is the SES, as it's error is the lowest one.
+
+
+
+lets plot the models:
+```{r}
+autoplot(elec_train, series = "Train") + 
+  autolayer(elec_test, series = "Test") +
+  autolayer(SES_fit$mean, series = "SES") +
+  autolayer(nsHW_fit$mean, series = "non-Seasonal HW") +
+  autolayer(ASHW_fit$mean, series = "Additive Seasonal HW") +
+  autolayer(ASHW_D_fit$mean, series = "Additive Seasonal HW Damped") +
+  # autolayer(MSHW_fit$mean, series = "Multiplicative Seasonal HW") +
+  autolayer(MSHW_D_fit$mean, series = "Multiplicative Seasonal HW Damped") +
+  ggtitle("Electricity consumption") +
+  xlab("Time (hour)") +
+  ylab("Electricity (kW)") +
+  xlim(c(500,1200))
+```
+The MSHW is removed from the graph, the model being too bad to be plotted.
+
+
+
+## Auto SARIMA model
+```{r}
+SARIMA_fit <- auto.arima(elec_train)
+Predict_SARIMA <- forecast(SARIMA_fit, h=921)
+
+autoplot(elec_train, series = "Train") + 
+  autolayer(elec_test, series = "Test") +
+  autolayer(Predict_SARIMA, series = "SARIMA", PI=FALSE) +
+  ggtitle("Electricity Consumption") +
+  xlab("Time (hour)") +
+  ylab("Electricity (kW)") +
+  xlim(c(850,1200))
+```
+The SARIMA is starting to follow the pattern aspect of the curve, it looks better than the previous models.
+
+
+
+Lets compute the RMSE
+```{r}
+message("RMSE Predict_SARIMA : ", sqrt(mean((Predict_SARIMA$mean-elec_test)^2)))
+```
+The SARIMA RMSE (57.2087133995781) is indeed better than the previous models !
+A lower RMSE could be reached by investigating the ACF and PACF and testing different parameters for p,d and q.
+
+
+
+## Auto NNAR model
+```{r}
+NN_fit <- nnetar(elec_train)
+Predict_NN <- forecast(NN_fit, h=921)
+
+autoplot(elec_train, series = "Train") + 
+  autolayer(elec_test, series = "Test") +
+  autolayer(Predict_NN$mean, series = "NNAR") +
+  ggtitle("Electricity Consumption") +
+  xlab("Time (hour)") +
+  ylab("Electricity (kW)") +
+  xlim(c(850,1200))
+```
+The NNAR model follows pretty much the pattern of the curve !
+
+
+
+Lets compute the RMSE
+```{r}
+message("RMSE Predict_NN : ", sqrt(mean((Predict_NN$mean-elec_test)^2)))
+```
+The NNAR model (RMSE: 79.8714650815262) does not do better than the SARIMA model, despite the prediction pattern being better than the SARIMA's ...
+
+
+
+## Making the predictions w/o the temperatures
+96 observations are to be predicted from the original dataset
+```{r}
+SARIMA_final_fit <- auto.arima(elec)
+Predict_SARIMA_final <- forecast(SARIMA_final_fit, h=96)
+
+autoplot(elec, series = "Electricity Consumption Datas") + 
+  autolayer(Predict_SARIMA_final$mean, series = "Electricity Consumption SARIMA Predictions") +
+  ggtitle("Electricity Consumption") +
+  xlab("Time (hour)") +
+  ylab("Electricity (kW)") +
+  xlim(c(850,1200))
+```
+
+
+
+Exporting the predictions:
+```{r}
+Predict_SARIMA_final$mean
+write.xlsx(Predict_SARIMA_final$mean, "/Users/tim/Library/CloudStorage/OneDrive-DataScienceTechInstitute/Time Series Analysis (Big Coeff)/Exam/preds.xlsx", sheetName = "Sheet1", col.names = TRUE, row.names = FALSE, append = FALSE)
+```
+
+
+
+# Importing the Temperature Data
+```{r}
+# We make a hour unit instead of a 15min unit
+temp <- ts(train_test_data$Temp..C.., start=c(1,2), freq=4)
+autoplot(temp) +
+  ggtitle("Temperature plot") +
+  xlab("Time (hour)") +
+  ylab("Temperature (°C)")
+```
+
+
+
+```{r}
+# Train = 80% of the train_test_data = 4603 * 0.8 = 3682 observations
+temp_train <- window(temp,end=c(921,3))
+# Test = 20% of the train_test_data = 4603 - 3682 = 921 observations
+temp_test <- window(temp, start=c(921,4))
+```
+
+
+
+## Linear regression model
+Lets build a linear model with the temperature to see its impact on the power consumption:
+```{r}
+LM_fit <- tslm(elec_train ~ temp_train)
+summary(LM_fit)
+```
+The p-value of the temperature is <<< 0.05.
+It is then highly correlated with the power consumption.
+
+
+
+Lets try to add a trend and a season pattern to this linear model:
+```{r}
+LM_fit_TS <- tslm(elec_train ~ temp_train + trend + season)
+summary(LM_fit_TS)
+```
+Only the trend seem to have an impact on the power consumption.
+
+
+
+Lets try to add only a trend to the linear model:
+```{r}
+LM_fit_T <- tslm(elec_train ~ temp_train + trend)
+summary(LM_fit_T)
+```
+It seems a nice model, all p-values are <<< 0.05.
+
+
+
+We can compare the previous models to see their metrics:
+```{r}
+print("Metrics for LM_fit: ")
+CV(LM_fit)
+
+print("Metrics for LM_fit_TS: ")
+CV(LM_fit_TS)
+
+print("Metrics for LM_fit_T: ")
+CV(LM_fit_T)
+```
+We can see that the last model (temperature + trend) has the best metrics everywhere (Lowest CV, AIC, AICc, BIC and highest AdjR2).
+
+
+To use it, we have to check if the residuals are independant.
+```{r}
+checkresiduals(LM_fit_T, test="LB", plot=TRUE)
+```
+The p-value is <<< 0.05, so we have to use another model, like an ARIMA model
+
+
+
+## Auto Arima model
+```{r}
+NNAR_temp_fit <- auto.arima(elec_train, xreg = temp_train)
+summary(NNAR_temp_fit)
+```
+
+
+
+Residuals check:
+```{r}
+checkresiduals(NNAR_temp_fit, test="LB", plot=TRUE)
+```
+The ARIMA p-value is > 0.05, so the residuals are independant, we can use this model !
+
+
+
+```{r}
+Predict_ARIMA <- forecast(NNAR_temp_fit, xreg = temp_test, h = 921)
+
+autoplot(elec_train, series = "Train") +
+  autolayer(elec_test, series = "Test") +
+  autolayer(Predict_ARIMA, series = "ARIMA w/ temperature", PI=FALSE) +
+  ggtitle("Electricity Consumption") +
+  xlab("Time (hour)") +
+  ylab("Electricity (kW)") +
+  xlim(c(850,1200))
+```
+The model does not look very good.
+
+
+
+Lets compute the ARIMA RMSE:
+```{r}
+message("RMSE Predict_ARIMA : ", sqrt(mean((Predict_ARIMA$mean-elec_test)^2)))
+```
+Predict_ARIMA RMSE: 88.6251889834377
+A lower RMSE could be reached by investigating the ACF and PACF.
+
+
+## NNAR model
+```{r}
+NNAR_temp_fit <- nnetar(elec_train, xreg = temp_train)
+Predict_NNAR_temp <- forecast(NNAR_temp_fit, h=921, xreg = temp_test)
+
+autoplot(elec_train, series = "Train") + 
+  autolayer(elec_test, series = "Test set") +
+  autolayer(Predict_NNAR_temp$mean, series = "NNAR w/ temperature") +
+  ggtitle("Electricity Consumption") +
+  xlab("Time (hour)") +
+  ylab("Electricity (kW)") +
+  xlim(c(850,1200))
+```
+The model looks good.
+
+
+
+Lets compute the NNAR RMSE:
+```{r}
+message("RMSE Predict_NNAR_temp : ", sqrt(mean((Predict_NNAR_temp$mean-elec_test)^2)))
+```
+Predict_NNAR_temp RMSE: 53.40427
+The NNAR does better than the ARIMA model, so we will choose the NNAR for the power consumption predictions !
+
+
+
+## Making the predictions w/ the temperatures
+
+```{r}
+temp_forecast <- ts(all_data[4604:4699,3], frequency = 4, start=c(0,1))
+NNAR_temp_fit_final <- nnetar(elec, xreg = temp)
+Predict_NNAR_temp_final <- forecast(NNAR_temp_fit_final, h=96, xreg=temp_forecast)
+
+autoplot(elec, series = "Electricity Consumption Datas") + 
+  autolayer(Predict_NNAR_temp_final$mean,series="Electricity Consumption NNAR Predictions with temperature") +
+  ggtitle("Electricity Consumption") +
+  xlab("Time (hour)") +
+  ylab("Electricity (kW)") +
+  xlim(c(850,1200))
+```
+
+
+
+Exporting the predictions:
+```{r}
+Predict_NNAR_temp_final$mean
+write.xlsx(Predict_NNAR_temp_final$mean, "/Users/tim/Library/CloudStorage/OneDrive-DataScienceTechInstitute/Time Series Analysis (Big Coeff)/Exam/preds_temp.xlsx", sheetName = "Sheet1", col.names = TRUE, row.names = FALSE, append = FALSE)
+```
+
+
+
+# Comparing the 2 predictions:
+```{r}
+autoplot(elec, series = "Power Consumption Predictions") + 
+  autolayer(Predict_SARIMA_final$mean, series = "SARIMA") +
+  autolayer(Predict_NNAR_temp_final$mean, series = "NNAR with Temperature") +
+  ggtitle("Electricity Consumption") +
+  xlab("Time (hour)") +
+  ylab("Electricity (kW)") +
+  xlim(c(850,1200))
+```
+The NNAR with temperatures seems to be more accurate
+than the SARIMA model without temperatures.
+
+
+# Conclusion
+The SARIMA model without the temperatures has a RMSE = 57.2087133995781
+The NNAR model with the temperatures has a RMSE = 53.40427
+Therefore, the best model is the NNAR with the temperatures.
